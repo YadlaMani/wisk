@@ -1,0 +1,10 @@
+[package]
+name = "extractor"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+miniz_oxide = "0.7"
+
+[features]
+private_tests = []
