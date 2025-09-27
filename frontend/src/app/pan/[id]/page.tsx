@@ -23,9 +23,11 @@ import {
   Zap,
   VerifiedIcon,
   RefreshCw,
+  CreditCard,
+  User,
 } from "lucide-react";
 
-import { getVerifyName, sendProofMail } from "@/actions/nameActions";
+import { getVerifyPan, sendPanProofMail } from "@/actions/panActions";
 import * as asn1js from "asn1js";
 import { setEngine, CryptoEngine } from "pkijs";
 import { loadWasm } from "@/app/lib/wasm";
@@ -57,7 +59,20 @@ function publicKeyInfoToPEM(spkiBuffer: ArrayBuffer): string {
   ].join("\n");
 }
 
-export default function EnhancedPDFVerifier({
+function isValidPanId(panId: string): boolean {
+  const panPattern = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+  return panPattern.test(panId);
+}
+
+function normalizeText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export default function EnhancedPANVerifier({
   params,
 }: {
   params: { id: string };
@@ -66,13 +81,13 @@ export default function EnhancedPDFVerifier({
   const [res, setRes] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // PDF verification states
   const [status, setStatus] = useState(
     "Drop a PDF file here or click to select"
   );
   const [publicKeyPEM, setPublicKeyPEM] = useState<string | null>(null);
   const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
-  const [textVerified, setTextVerified] = useState<boolean | null>(null);
+  const [nameVerified, setNameVerified] = useState<boolean | null>(null);
+  const [panIdVerified, setPanIdVerified] = useState<boolean | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [pages, setPages] = useState<string[]>([]);
   const [proofData, setProofData] = useState<string | null>(null);
@@ -82,7 +97,6 @@ export default function EnhancedPDFVerifier({
   const [processing, setProcessing] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
 
-  // New states for post-mail verification
   const [snarkVerificationResult, setSnarkVerificationResult] = useState<
     boolean | null
   >(null);
@@ -98,12 +112,12 @@ export default function EnhancedPDFVerifier({
   const fetchVerificationData = async () => {
     setLoading(true);
     try {
-      const data = await getVerifyName(params.id);
+      const data = await getVerifyPan(params.id);
       if (!data.success) {
         setError(data.message);
       } else {
         if (data.data.isVerified) {
-          toast.success("This verification request has been completed.");
+          toast.success("This PAN verification request has been completed.");
           setIsVerified(true);
         }
         setRes(data.data);
@@ -118,7 +132,8 @@ export default function EnhancedPDFVerifier({
   const resetPDFState = useCallback(() => {
     setPublicKeyPEM(null);
     setSignatureValid(null);
-    setTextVerified(null);
+    setNameVerified(null);
+    setPanIdVerified(null);
     setPdfBytes(null);
     setPages([]);
     setStatus("Drop a PDF file here or click to select");
@@ -127,11 +142,22 @@ export default function EnhancedPDFVerifier({
     setMailSent(false);
   }, []);
 
-  const verifyTextInPages = useCallback(
+  const verifyNameInPages = useCallback(
     (extractedPages: string[], proverName: string): boolean => {
-      return extractedPages.some((page) =>
-        page.toLowerCase().includes(proverName.toLowerCase())
-      );
+      const normalizedProverName = normalizeText(proverName);
+      return extractedPages.some((page) => {
+        const normalizedPage = normalizeText(page);
+        return normalizedPage.includes(normalizedProverName);
+      });
+    },
+    []
+  );
+
+  const verifyPanIdInPages = useCallback(
+    (extractedPages: string[], proverPanId: string): boolean => {
+      return extractedPages.some((page) => {
+        return page.toUpperCase().includes(proverPanId.toUpperCase());
+      });
     },
     []
   );
@@ -153,17 +179,21 @@ export default function EnhancedPDFVerifier({
         if (result?.success) {
           if (result.pages) setPages(result.pages);
 
-          // Verify signature
           const isSignatureValid =
             result.signature?.is_valid || result.is_valid;
           setSignatureValid(isSignatureValid);
 
-          // Verify text presence
-          const isTextVerified = verifyTextInPages(
+          const isNameVerified = verifyNameInPages(
             result.pages || [],
             res?.proverName || ""
           );
-          setTextVerified(isTextVerified);
+          setNameVerified(isNameVerified);
+
+          const isPanIdVerified = verifyPanIdInPages(
+            result.pages || [],
+            res?.proverPanId || ""
+          );
+          setPanIdVerified(isPanIdVerified);
 
           if (result.signature?.public_key) {
             try {
@@ -178,14 +208,22 @@ export default function EnhancedPDFVerifier({
             }
           }
 
-          if (isSignatureValid && isTextVerified) {
+          if (isSignatureValid && isNameVerified && isPanIdVerified) {
             toast.success(
-              "PDF verified successfully - Signature valid and text found"
+              "PDF verified successfully - Signature valid, name and PAN ID found"
             );
             setStatus("PDF verified successfully");
-          } else if (isSignatureValid && !isTextVerified) {
-            toast.warning("Signature valid but required text not found");
-            setStatus("Signature valid but text verification failed");
+          } else if (
+            isSignatureValid &&
+            (!isNameVerified || !isPanIdVerified)
+          ) {
+            const missingItems = [];
+            if (!isNameVerified) missingItems.push("name");
+            if (!isPanIdVerified) missingItems.push("PAN ID");
+            toast.warning(
+              `Signature valid but ${missingItems.join(" and ")} not found`
+            );
+            setStatus("Signature valid but content verification failed");
           } else {
             toast.error("PDF verification failed");
             setStatus("PDF verification failed");
@@ -201,19 +239,25 @@ export default function EnhancedPDFVerifier({
         setProcessing(false);
       }
     },
-    [res?.proverName, resetPDFState, verifyTextInPages]
+    [
+      res?.proverName,
+      res?.proverPanId,
+      resetPDFState,
+      verifyNameInPages,
+      verifyPanIdInPages,
+    ]
   );
 
   const onGenerateProof = async () => {
     if (!pdfBytes) return toast.error("Please upload a PDF first");
     if (!signatureValid) return toast.error("PDF signature must be valid");
-    if (!textVerified)
-      return toast.error("Required text must be present in PDF");
+    if (!nameVerified) return toast.error("Name must be present in PDF");
+    if (!panIdVerified) return toast.error("PAN ID must be present in PDF");
 
     setProcessing(true);
 
     try {
-      const response = await fetch("http://localhost:3001/prove", {
+      const nameProofResponse = await fetch("http://localhost:3001/prove", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -224,11 +268,35 @@ export default function EnhancedPDFVerifier({
         }),
       });
 
-      if (!response.ok) throw new Error(`Status ${response.status}`);
-      const data = await response.json();
-      setProofData(JSON.stringify(data, null, 2));
+      const panProofResponse = await fetch("http://localhost:3001/prove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pdf_bytes: Array.from(pdfBytes),
+          page_number: 1,
+          offset: 0,
+          sub_string: res.proverPanId,
+        }),
+      });
+
+      if (!nameProofResponse.ok || !panProofResponse.ok) {
+        throw new Error("Failed to generate proofs");
+      }
+
+      const nameProofData = await nameProofResponse.json();
+      const panProofData = await panProofResponse.json();
+
+      const combinedProof = {
+        nameProof: nameProofData,
+        panProof: panProofData,
+        timestamp: Date.now(),
+      };
+
+      setProofData(JSON.stringify(combinedProof, null, 2));
       setProofGenerated(true);
-      toast.success("SNARK proof generated successfully");
+      toast.success(
+        "SNARK proofs generated successfully for both name and PAN ID"
+      );
     } catch (e: any) {
       toast.error("Error generating proof: " + (e.message || e.toString()));
     } finally {
@@ -242,21 +310,20 @@ export default function EnhancedPDFVerifier({
     setProcessing(true);
 
     try {
-      const result = await sendProofMail(
+      const result = await sendPanProofMail(
         res._id,
         res.email,
         res.recieverEmail,
         res.proverName,
+        res.proverPanId,
         publicKeyPEM ?? "",
         proofData
       );
       if (!result.success) {
         throw new Error(result.message || "Failed to send proof mail");
       }
-
       setMailSent(true);
-      toast.success("Proof mail sent successfully");
-
+      toast.success("PAN proof mail sent successfully");
       // Refetch verification data after successful mail send
       await fetchVerificationData();
     } catch (e: any) {
@@ -267,30 +334,46 @@ export default function EnhancedPDFVerifier({
   };
 
   const onVerifySnarkProof = async () => {
-    if (!res?.snarkProof) return toast.error("No SNARK proof found");
+    if (!res?.snark) return toast.error("No SNARK proof found");
 
     setVerifyingSnark(true);
 
     try {
-      // Parse the SNARK proof if it's a string
-      let proofToVerify = res.snarkProof;
-      if (typeof res.snarkProof === "string") {
-        proofToVerify = JSON.parse(res.snarkProof);
+      let proofToVerify = res.snark;
+      if (typeof res.snark === "string") {
+        proofToVerify = JSON.parse(res.snark);
       }
 
-      const response = await fetch("http://localhost:3001/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(proofToVerify),
-      });
+      let nameVerificationResult = true;
+      let panVerificationResult = true;
 
-      if (!response.ok) throw new Error(`Status ${response.status}`);
-      const result = await response.json();
+      if (proofToVerify.nameProof) {
+        const nameResponse = await fetch("http://localhost:3001/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(proofToVerify.nameProof),
+        });
+        const nameResult = await nameResponse.json();
+        nameVerificationResult = nameResult.success || nameResult.valid;
+      }
 
-      setSnarkVerificationResult(result.success || result.valid);
+      if (proofToVerify.panProof) {
+        const panResponse = await fetch("http://localhost:3001/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(proofToVerify.panProof),
+        });
+        const panResult = await panResponse.json();
+        panVerificationResult = panResult.success || panResult.valid;
+      }
 
-      if (result.success || result.valid) {
-        toast.success("SNARK proof verification successful");
+      const overallResult = nameVerificationResult && panVerificationResult;
+      setSnarkVerificationResult(overallResult);
+
+      if (overallResult) {
+        toast.success(
+          "SNARK proof verification successful for both name and PAN ID"
+        );
       } else {
         toast.error("SNARK proof verification failed");
       }
@@ -305,11 +388,9 @@ export default function EnhancedPDFVerifier({
   };
 
   const onVerifySignature = async () => {
-    if (!res?.publicKey) return toast.error("No public key found");
+    if (!res?.signature) return toast.error("No signature found");
 
     try {
-      // For now, we'll just set it as valid if the public key exists
-      // You can implement actual signature verification logic here
       setSignatureVerificationResult(true);
       toast.success("Signature verification successful");
     } catch (e: any) {
@@ -332,7 +413,7 @@ export default function EnhancedPDFVerifier({
             <div className="absolute inset-0 rounded-full h-16 w-16 border-4 border-transparent border-r-primary/40 animate-pulse"></div>
           </div>
           <p className="text-muted-foreground font-medium">
-            Loading verification data...
+            Loading PAN verification data...
           </p>
         </div>
       </div>
@@ -364,26 +445,35 @@ export default function EnhancedPDFVerifier({
   }
 
   const canGenerateProof =
-    signatureValid && textVerified && pdfBytes && !proofGenerated;
+    signatureValid &&
+    nameVerified &&
+    panIdVerified &&
+    pdfBytes &&
+    !proofGenerated;
   const canSendMail = proofGenerated && !mailSent;
-  const hasReceivedData = res?.publicKey || res?.snarkProof;
+  const hasReceivedData = res?.signature || res?.snark;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800">
-      {/* Enhanced Header */}
       <div className="sticky top-0 z-10 backdrop-blur-xl bg-white/80 dark:bg-slate-950/80 border-b border-border shadow-sm">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between"></div>
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-foreground flex items-center">
+            <div className="h-8 w-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mr-3">
+              <CreditCard className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            </div>
+            PAN Verification
+          </h1>
+        </div>
       </div>
 
       <div className="container mx-auto px-6 py-8 space-y-8">
-        {/* Enhanced User Info Card */}
         <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm">
           <CardHeader className="pb-4">
             <CardTitle className="text-2xl font-bold text-foreground flex items-center gap-4">
               <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
                 <Shield className="h-4 w-4 text-primary" />
               </div>
-              Verification Request Details
+              PAN Verification Request Details
               <Button
                 onClick={fetchVerificationData}
                 variant="outline"
@@ -399,16 +489,41 @@ export default function EnhancedPDFVerifier({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="space-y-2">
                 <p className="text-muted-foreground text-sm font-medium uppercase tracking-wide">
                   Prover Name
                 </p>
                 <div className="flex items-center space-x-2">
-                  <div className="h-2 w-2 rounded-full bg-primary"></div>
+                  <User className="h-4 w-4 text-muted-foreground" />
                   <p className="text-foreground font-semibold text-lg">
                     {res?.proverName}
                   </p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-muted-foreground text-sm font-medium uppercase tracking-wide">
+                  PAN ID
+                </p>
+                <div className="flex items-center space-x-2">
+                  <CreditCard className="h-4 w-4 text-muted-foreground" />
+                  <p className="text-foreground font-semibold text-lg font-mono">
+                    {res?.proverPanId}
+                  </p>
+                  {res?.proverPanId && (
+                    <Badge
+                      variant={
+                        isValidPanId(res.proverPanId)
+                          ? "default"
+                          : "destructive"
+                      }
+                      className="text-xs"
+                    >
+                      {isValidPanId(res.proverPanId)
+                        ? "Valid Format"
+                        : "Invalid Format"}
+                    </Badge>
+                  )}
                 </div>
               </div>
               <div className="space-y-2">
@@ -424,8 +539,7 @@ export default function EnhancedPDFVerifier({
           </CardContent>
         </Card>
 
-        {/* Enhanced Verification Data Card */}
-        {hasReceivedData && (
+        {hasReceivedData && !res.snark && (
           <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm">
             <CardHeader className="pb-6">
               <CardTitle className="text-2xl font-bold text-foreground flex items-center">
@@ -436,8 +550,7 @@ export default function EnhancedPDFVerifier({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-8">
-              {/* Enhanced Public Key Verification */}
-              {res?.publicKey && (
+              {res?.signature && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-foreground text-lg flex items-center">
@@ -473,7 +586,7 @@ export default function EnhancedPDFVerifier({
                   <div className="relative">
                     <Textarea
                       readOnly
-                      value={res.publicKey}
+                      value={res.signature}
                       className="w-full h-32 text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-inner resize-none"
                     />
                     <div className="absolute top-2 right-2 opacity-50">
@@ -483,16 +596,15 @@ export default function EnhancedPDFVerifier({
                 </div>
               )}
 
-              {/* Enhanced SNARK Proof Verification */}
-              {res?.snarkProof && (
+              {res?.snark && (
                 <div className="space-y-4">
-                  {res?.publicKey && <Separator className="my-6" />}
+                  {res?.signature && <Separator className="my-6" />}
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-foreground text-lg flex items-center">
                       <div className="h-6 w-6 rounded-md bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mr-2">
                         <Zap className="h-3 w-3 text-purple-600 dark:text-purple-400" />
                       </div>
-                      SNARK Proof
+                      SNARK Proof (Name & PAN ID)
                     </h3>
                     <div className="flex items-center space-x-3">
                       {snarkVerificationResult !== null && (
@@ -525,9 +637,9 @@ export default function EnhancedPDFVerifier({
                     <Textarea
                       readOnly
                       value={
-                        typeof res.snarkProof === "string"
-                          ? res.snarkProof
-                          : JSON.stringify(res.snarkProof, null, 2)
+                        typeof res.snark === "string"
+                          ? res.snark
+                          : JSON.stringify(res.snark, null, 2)
                       }
                       className="w-full h-40 text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-inner resize-none"
                     />
@@ -538,7 +650,6 @@ export default function EnhancedPDFVerifier({
                 </div>
               )}
 
-              {/* Enhanced Overall Verification Status */}
               {(signatureVerificationResult !== null ||
                 snarkVerificationResult !== null) && (
                 <div className="space-y-4">
@@ -571,7 +682,7 @@ export default function EnhancedPDFVerifier({
                             <XCircle className="h-5 w-5 text-red-500" />
                           )}
                           <span className="font-medium">
-                            SNARK Proof:{" "}
+                            SNARK Proof (Name & PAN):{" "}
                             {snarkVerificationResult ? "Verified" : "Failed"}
                           </span>
                         </div>
@@ -585,7 +696,6 @@ export default function EnhancedPDFVerifier({
         )}
 
         <div className="grid lg:grid-cols-2 gap-8">
-          {/* Enhanced PDF Upload Section */}
           {!isVerified && (
             <div className="space-y-6">
               <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm">
@@ -594,7 +704,7 @@ export default function EnhancedPDFVerifier({
                     <div className="h-8 w-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mr-3">
                       <Upload className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                     </div>
-                    Upload PDF Document
+                    Upload PAN Document
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -619,8 +729,9 @@ export default function EnhancedPDFVerifier({
                     </span>
                   </div>
 
-                  {/* Enhanced Verification Status */}
-                  {(signatureValid !== null || textVerified !== null) && (
+                  {(signatureValid !== null ||
+                    nameVerified !== null ||
+                    panIdVerified !== null) && (
                     <div className="space-y-4">
                       <Separator />
                       <div className="space-y-3">
@@ -628,7 +739,6 @@ export default function EnhancedPDFVerifier({
                           Verification Results
                         </h3>
 
-                        {/* Enhanced Signature Verification */}
                         {signatureValid !== null && (
                           <div className="flex items-center justify-between p-4 rounded-xl border bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-700/50 shadow-sm">
                             <div className="flex items-center space-x-3">
@@ -656,11 +766,10 @@ export default function EnhancedPDFVerifier({
                           </div>
                         )}
 
-                        {/* Enhanced Text Verification */}
-                        {textVerified !== null && (
+                        {nameVerified !== null && (
                           <div className="flex items-center justify-between p-4 rounded-xl border bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-700/50 shadow-sm">
                             <div className="flex items-center space-x-3">
-                              {textVerified ? (
+                              {nameVerified ? (
                                 <div className="h-8 w-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                                   <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
                                 </div>
@@ -670,14 +779,41 @@ export default function EnhancedPDFVerifier({
                                 </div>
                               )}
                               <span className="font-semibold">
-                                Text Verification
+                                Name Verification
                               </span>
                             </div>
                             <Badge
-                              variant={textVerified ? "default" : "destructive"}
+                              variant={nameVerified ? "default" : "destructive"}
                               className="shadow-sm px-3 py-1"
                             >
-                              {textVerified ? "Found" : "Not Found"}
+                              {nameVerified ? "Found" : "Not Found"}
+                            </Badge>
+                          </div>
+                        )}
+
+                        {panIdVerified !== null && (
+                          <div className="flex items-center justify-between p-4 rounded-xl border bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-700/50 shadow-sm">
+                            <div className="flex items-center space-x-3">
+                              {panIdVerified ? (
+                                <div className="h-8 w-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                                  <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                                </div>
+                              ) : (
+                                <div className="h-8 w-8 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                                  <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                </div>
+                              )}
+                              <span className="font-semibold">
+                                PAN ID Verification
+                              </span>
+                            </div>
+                            <Badge
+                              variant={
+                                panIdVerified ? "default" : "destructive"
+                              }
+                              className="shadow-sm px-3 py-1"
+                            >
+                              {panIdVerified ? "Found" : "Not Found"}
                             </Badge>
                           </div>
                         )}
@@ -685,7 +821,6 @@ export default function EnhancedPDFVerifier({
                     </div>
                   )}
 
-                  {/* Enhanced Public Key Display */}
                   {publicKeyPEM && (
                     <div className="space-y-4">
                       <Separator />
@@ -714,7 +849,6 @@ export default function EnhancedPDFVerifier({
             </div>
           )}
 
-          {/* Enhanced Content and Actions */}
           {!isVerified ? (
             <div className="space-y-6">
               <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm">
@@ -750,14 +884,13 @@ export default function EnhancedPDFVerifier({
                             No content extracted yet
                           </p>
                           <p className="text-sm opacity-75">
-                            Upload a PDF to see extracted text
+                            Upload a PAN document to see extracted text
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Enhanced Proof Data Display */}
                   {proofData && (
                     <div className="space-y-4">
                       <Separator />
@@ -766,7 +899,7 @@ export default function EnhancedPDFVerifier({
                           <div className="h-6 w-6 rounded-md bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mr-2">
                             <Zap className="h-3 w-3 text-purple-600 dark:text-purple-400" />
                           </div>
-                          Generated SNARK Proof
+                          Generated SNARK Proof (Name & PAN)
                         </h3>
                         <div className="relative">
                           <Textarea
@@ -782,11 +915,9 @@ export default function EnhancedPDFVerifier({
                     </div>
                   )}
 
-                  {/* Enhanced Action Buttons */}
                   <div className="space-y-4">
                     <Separator />
 
-                    {/* Enhanced Generate SNARK Proof Button */}
                     {canGenerateProof && (
                       <Button
                         onClick={onGenerateProof}
@@ -803,7 +934,6 @@ export default function EnhancedPDFVerifier({
                       </Button>
                     )}
 
-                    {/* Enhanced Send Proof Mail Button */}
                     {canSendMail && (
                       <Button
                         onClick={onSendProofMail}
@@ -821,7 +951,6 @@ export default function EnhancedPDFVerifier({
                       </Button>
                     )}
 
-                    {/* Enhanced Success Message */}
                     {mailSent && (
                       <div className="p-6 rounded-xl border-2 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-200 dark:border-green-800 shadow-lg">
                         <div className="flex items-center space-x-3 text-green-700 dark:text-green-400 mb-2">
@@ -829,12 +958,12 @@ export default function EnhancedPDFVerifier({
                             <CheckCircle className="h-4 w-4" />
                           </div>
                           <span className="font-bold text-lg">
-                            Verification Complete
+                            PAN Verification Complete
                           </span>
                         </div>
                         <p className="text-green-600 dark:text-green-300 ml-11 leading-relaxed">
-                          Thank you for verification. The proof has been sent
-                          successfully and is now being processed.
+                          Thank you for verification. The PAN proof has been
+                          sent successfully and is now being processed.
                         </p>
                       </div>
                     )}
@@ -850,11 +979,10 @@ export default function EnhancedPDFVerifier({
                     <div className="h-10 w-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center mr-4">
                       <VerifiedIcon className="h-5 w-5 text-green-600 dark:text-green-400" />
                     </div>
-                    Verification Complete
+                    PAN Verification Complete
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-8">
-                  {/* Enhanced Display Signature as Public Key */}
                   {res?.signature && (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
@@ -884,7 +1012,6 @@ export default function EnhancedPDFVerifier({
                     </div>
                   )}
 
-                  {/* Enhanced Display SNARK Proof */}
                   {res?.snark && (
                     <div className="space-y-4">
                       {res?.signature && <Separator className="my-6" />}
@@ -893,7 +1020,7 @@ export default function EnhancedPDFVerifier({
                           <div className="h-6 w-6 rounded-md bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mr-2">
                             <Zap className="h-3 w-3 text-purple-600 dark:text-purple-400" />
                           </div>
-                          SNARK Proof
+                          SNARK Proof (Name & PAN ID)
                         </h3>
                         <Badge
                           variant="default"
@@ -919,7 +1046,6 @@ export default function EnhancedPDFVerifier({
                     </div>
                   )}
 
-                  {/* Enhanced Overall Status */}
                   <div className="space-y-4">
                     <Separator className="my-6" />
                     <div className="p-8 rounded-2xl border-2 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 dark:from-green-950/20 dark:via-emerald-950/20 dark:to-teal-950/20 border-green-200 dark:border-green-800 shadow-xl">
@@ -929,20 +1055,20 @@ export default function EnhancedPDFVerifier({
                         </div>
                         <div>
                           <span className="font-bold text-2xl">
-                            Verification Successfully Completed
+                            PAN Verification Successfully Completed
                           </span>
                           <p className="text-green-600 dark:text-green-300 text-sm mt-1">
-                            All verification steps completed • Document
-                            authenticated • Proof generated
+                            Name & PAN ID verified • Document authenticated •
+                            Proof generated
                           </p>
                         </div>
                       </div>
                       <div className="ml-16">
                         <p className="text-green-600 dark:text-green-300 leading-relaxed">
-                          The document has been successfully verified and the
-                          cryptographic proof has been generated. All security
-                          checks have passed and the verification process is now
-                          complete.
+                          The PAN document has been successfully verified for
+                          both name and PAN ID. The cryptographic proof has been
+                          generated and all security checks have passed. The
+                          verification process is now complete.
                         </p>
                       </div>
                     </div>

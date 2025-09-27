@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 import React, { useState } from "react";
-import { useUser } from "@clerk/nextjs";
-import { createNameVerify } from "@/actions/nameActions";
+import { useUser, RedirectToSignIn } from "@clerk/nextjs";
+
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { createPanVerify } from "@/actions/panActions";
 
 import {
   Card,
@@ -15,14 +16,16 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 import { CheckCircle, ArrowLeft } from "lucide-react";
-import { RedirectToSignIn } from "@clerk/nextjs";
-const Page = () => {
+
+const PanVerificationPage = () => {
   const { user } = useUser();
 
-  const [receiverEmail, setReceiverEmail] = useState("");
+  const [panId, setPanId] = useState("");
   const [name, setName] = useState("");
+  const [receiverEmail, setReceiverEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+
   if (!user) {
     return <RedirectToSignIn />;
   }
@@ -34,20 +37,26 @@ const Page = () => {
       return <RedirectToSignIn />;
     }
 
+    if (!receiverEmail) {
+      toast.error("Please enter receiver's email.");
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await createNameVerify(
+      const res = await createPanVerify(
         name,
+        panId,
         user.primaryEmailAddress.emailAddress,
         receiverEmail
       );
-
       if (res.success) {
         setSuccess(true);
-        setReceiverEmail("");
+        setPanId("");
         setName("");
+        setReceiverEmail("");
       } else {
-        toast.error(res.message || "Failed to send verification request.");
+        toast.error(res.message || "Failed to verify PAN.");
       }
     } catch (err: any) {
       toast.error(err.message || "An error occurred.");
@@ -66,20 +75,28 @@ const Page = () => {
         {!success ? (
           <>
             <CardHeader>
-              <CardTitle>Name Verification</CardTitle>
+              <CardTitle>PAN Card Verification</CardTitle>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <Input
                   type="text"
-                  placeholder="Enter name to verify"
+                  placeholder="Enter full name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
                 />
                 <Input
+                  type="text"
+                  placeholder="Enter PAN Card ID"
+                  value={panId}
+                  onChange={(e) => setPanId(e.target.value.toUpperCase())}
+                  maxLength={10}
+                  required
+                />
+                <Input
                   type="email"
-                  placeholder="Enter receiver email"
+                  placeholder="Enter receiver's email"
                   value={receiverEmail}
                   onChange={(e) => setReceiverEmail(e.target.value)}
                   required
@@ -98,8 +115,10 @@ const Page = () => {
         ) : (
           <div className="flex flex-col items-center justify-center p-6 space-y-4">
             <CheckCircle className="w-16 h-16 text-green-500" />
-            <h2 className="text-lg font-semibold">Thank you!</h2>
-            <p className="text-sm text-gray-500">Email sent successfully.</p>
+            <h2 className="text-lg font-semibold">Verification Successful!</h2>
+            <p className="text-sm text-gray-500">
+              PAN verification mail sent successfully.
+            </p>
             <Button
               variant="outline"
               onClick={handleGoBack}
@@ -115,4 +134,4 @@ const Page = () => {
   );
 };
 
-export default Page;
+export default PanVerificationPage;

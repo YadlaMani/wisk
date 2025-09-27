@@ -1,7 +1,9 @@
 {
   "dependencies": {
+    "@clerk/nextjs": "^6.33.0",
     "mongoose": "^8.18.2",
-    "nodemailer": "^7.0.6"
+    "nodemailer": "^7.0.6",
+    "sonner": "^2.0.7"
   },
   "devDependencies": {
     "@types/nodemailer": "^7.0.1"

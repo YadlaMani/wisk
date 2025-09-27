@@ -1,18 +1,18 @@
 import transporter from "./transporter";
-
-export const sendNameVerificationEmail = async (
+export const sendNamePanVerificationEmail = async (
   to: string,
   fromEmail: string,
   proverName: string,
+  panId: string,
   id: string
 ) => {
   try {
-    const verifyUrl = `${process.env.API_URL}/name/${id}`;
+    const verifyUrl = `${process.env.API_URL}/pan/${id}`;
 
     const mailOptions = {
       from: `"Wisk" <wisk.zk.dev@gmail.com>`,
       to,
-      subject: `Verify Name Request - Wisk`,
+      subject: `Verify Name & PAN ID Request - Wisk`,
       html: `
         <div style="
           font-family: Arial, Helvetica, sans-serif;
@@ -25,12 +25,12 @@ export const sendNameVerificationEmail = async (
           border-radius: 8px;
         ">
           <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600;">
-            Name Verification Request
+            Name & PAN ID Verification Request
           </h2>
           
           <p style="font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
             You received a verification request from <strong>${fromEmail}</strong> 
-            to verify the name <strong>${proverName}</strong>.
+            to verify the name <strong>${proverName}</strong> with PAN ID <strong>${panId}</strong>.
           </p>
 
           <a href="${verifyUrl}" 
@@ -44,7 +44,7 @@ export const sendNameVerificationEmail = async (
               border-radius: 6px;
               font-weight: 500;
             ">
-            Verify Name
+            Verify Name & PAN ID
           </a>
 
           <p style="font-size: 12px; color: #444; margin-top: 24px;">
@@ -55,25 +55,26 @@ export const sendNameVerificationEmail = async (
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log("Verification email sent:", info.messageId);
+    console.log("Name & PAN ID verification email sent:", info.messageId);
   } catch (err) {
-    console.error("Error sending verification email:", err);
+    console.error("Error sending name & PAN ID verification email:", err);
   }
 };
 
-export const sendConfirmedVerificationEmail = async (
+export const sendConfirmedPanVerificationMail = async (
   to: string,
   fromEmail: string,
   proverName: string,
+  proverPanId: string,
   id: string
 ) => {
   try {
-    const detailsUrl = `${process.env.API_URL}/name/${id}`;
+    const detailsUrl = `${process.env.API_URL}/pan/${id}`;
 
     const mailOptions = {
       from: `"Wisk" <wisk.zk.dev@gmail.com>`,
       to,
-      subject: `Name Verification Confirmed - Wisk`,
+      subject: `Name & PAN ID Verification Confirmed - Wisk`,
       html: `
         <div style="
           font-family: Arial, Helvetica, sans-serif;
@@ -86,11 +87,13 @@ export const sendConfirmedVerificationEmail = async (
           border-radius: 8px;
         ">
           <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600;">
-            Name Verification Successful
+            Name & PAN ID Verification Successful
           </h2>
 
           <p style="font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
-            The name <strong>${proverName}</strong> has been successfully verified by <strong>${fromEmail}</strong>.
+            The name <strong>${proverName}</strong> with PAN ID 
+            <strong>${proverPanId}</strong> has been successfully verified by 
+            <strong>${fromEmail}</strong>.
           </p>
 
           <a href="${detailsUrl}" 
@@ -115,8 +118,8 @@ export const sendConfirmedVerificationEmail = async (
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log("Confirmation email sent:", info.messageId);
+    console.log("Name & PAN confirmation email sent:", info.messageId);
   } catch (err) {
-    console.error("Error sending confirmation email:", err);
+    console.error("Error sending Name & PAN confirmation email:", err);
   }
 };
