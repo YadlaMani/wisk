@@ -17,7 +17,7 @@ export const sendNameVerificationEmail = async (
   id: string
 ) => {
   try {
-    const verifyUrl = `${process.env.API_URL}/name/verify/${id}`;
+    const verifyUrl = `${process.env.API_URL}/name/${id}`;
 
     const mailOptions = {
       from: `"Wisk" <wisk.zk.dev@gmail.com>`,
