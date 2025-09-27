@@ -9,7 +9,6 @@ import {
   UserButton,
 } from "@clerk/nextjs";
 import { ModeToggle } from "./ui/mode-toggle";
-import { Shield } from "lucide-react";
 
 export default function Header() {
   return (

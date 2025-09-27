@@ -7,13 +7,9 @@ const Hero = () => {
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
       <div className="absolute inset-0 grid-pattern opacity-50" />
 
-      <div className="absolute top-0 left-1/4 w-px h-64 bg-gradient-to-b from-border to-transparent" />
-      <div className="absolute top-0 right-1/4 w-px h-64 bg-gradient-to-b from-border to-transparent" />
-      <div className="absolute bottom-0 left-1/3 w-px h-32 bg-gradient-to-t from-border to-transparent" />
-      <div className="absolute bottom-0 right-1/3 w-px h-32 bg-gradient-to-t from-border to-transparent" />
-
       <div className="container px-4 md:px-6 relative z-10">
         <div className="flex flex-col items-center space-y-8 text-center max-w-4xl mx-auto">
+          <img src="./logo.png" alt="Logo" className="h-64 w-64" />
           <div className="fade-in">
             <Badge variant="secondary" className="mb-4">
               <Shield className="w-3 h-3 mr-1" />
