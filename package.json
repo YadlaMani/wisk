@@ -1,5 +1,9 @@
 {
   "dependencies": {
-    "mongoose": "^8.18.2"
+    "mongoose": "^8.18.2",
+    "nodemailer": "^7.0.6"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.1"
   }
 }
