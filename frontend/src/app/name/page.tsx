@@ -6,6 +6,7 @@ import { createNameVerify } from "@/actions/nameActions";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+
 import {
   Card,
   CardHeader,
@@ -14,7 +15,7 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 import { CheckCircle, ArrowLeft } from "lucide-react";
-
+import { RedirectToSignIn } from "@clerk/nextjs";
 const Page = () => {
   const { user } = useUser();
 
@@ -22,12 +23,15 @@ const Page = () => {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  if (!user) {
+    return <RedirectToSignIn />;
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.primaryEmailAddress?.emailAddress) {
       toast.error("User email not found. Please sign in again.");
-      return;
+      return <RedirectToSignIn />;
     }
 
     setLoading(true);
