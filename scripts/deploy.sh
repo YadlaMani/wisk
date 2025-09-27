@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Unified deployment script for ZKPDF
-# Usage: ./deploy.sh [app|docs|all]
+# Unified deployment script for ZKPDF (Next.js only)
+# Usage: ./deploy.sh [app|all]
 # Default: all
 
 set -e  # Exit on any error
@@ -23,10 +23,6 @@ print_status() {
 
 print_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
 print_error() {
@@ -62,102 +58,40 @@ build_wasm() {
 
 # Function to build Next.js app
 build_app() {
-    print_status "Building Next.js app..."
-    
+    print_status "Building Next.js application..."
+
     # Check if we're in the right directory
     if [ ! -f "app/package.json" ]; then
         print_error "app/package.json not found. Are you in the project root?"
         exit 1
     fi
-    
+
     cd app
-    
+
     # Check if yarn is available
     if ! command_exists yarn; then
         print_error "yarn is not installed. Please install it first."
         exit 1
     fi
-    
+
     # Install dependencies if needed
     if [ ! -d "node_modules" ]; then
         print_status "Installing dependencies..."
         yarn install
     fi
-    
+
+    # Build Next.js (not export)
     yarn build
-    
+
     # Check if build was successful
-    if [ -d "out" ]; then
-        print_success "App build successful! Static files are in app/out/"
+    if [ -d ".next" ]; then
+        print_success "Next.js app build successful! Build output is in app/.next/"
     else
-        print_error "App build failed! No 'out' directory found."
+        print_error "App build failed! No '.next' directory found."
         exit 1
     fi
-    
-    cd ..
-}
 
-# Function to build documentation
-build_docs() {
-    print_status "Building documentation..."
-    
-    # Install mdbook if not already installed
-    if ! command_exists mdbook; then
-        print_status "Installing mdbook..."
-        cargo install mdbook
-    fi
-    
-    cd docs
-    
-    if [ ! -f "build.sh" ]; then
-        print_error "build.sh not found in docs/"
-        exit 1
-    fi
-    
-    chmod +x build.sh
-    ./build.sh
-    
-    # Check if docs build was successful
-    if [ -d "book" ]; then
-        print_success "Documentation build successful! Files are in docs/book/"
-    else
-        print_error "Documentation build failed! No 'book' directory found."
-        exit 1
-    fi
-    
     cd ..
-}
-
-# Function to create combined deployment
-create_combined_deployment() {
-    print_status "Creating combined deployment..."
-    
-    # Create a combined deployment directory
-    mkdir -p combined-deploy
-    
-    # Copy app files to root
-    cp -r app/out/* combined-deploy/
-    
-    # Copy docs to /docs subdirectory
-    mkdir -p combined-deploy/docs
-    cp -r docs/book/* combined-deploy/docs/
-    
-    # Create a simple index.html redirect for docs
-    cat > combined-deploy/docs/index.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>ZKPDF Documentation</title>
-    <meta http-equiv="refresh" content="0; url=./introduction.html">
-</head>
-<body>
-    <p>Redirecting to documentation... <a href="./introduction.html">Click here</a></p>
-</body>
-</html>
-EOF
-    
-    print_success "Combined deployment created in combined-deploy/"
 }
 
 # Main deployment logic
@@ -165,56 +99,29 @@ main() {
     print_status "🚀 Starting ZKPDF deployment (target: $DEPLOY_TARGET)..."
     
     case $DEPLOY_TARGET in
-        "app")
+        "app"|"all")
             build_wasm
             build_app
             print_success "🎉 App deployment ready!"
             echo ""
-            echo "📁 App files: app/out/ (ready for GitHub Pages)"
-            echo "🌐 App URL: https://privacy-ethereum.github.io/zkpdf/"
-            ;;
-        "docs")
-            build_docs
-            print_success "🎉 Documentation deployment ready!"
-            echo ""
-            echo "📁 Docs files: docs/book/ (ready for GitHub Pages)"
-            echo "🌐 Docs URL: https://privacy-ethereum.github.io/zkpdf-docs/"
-            ;;
-        "all")
-            build_wasm
-            build_app
-            build_docs
-            create_combined_deployment
-            print_success "🎉 Complete deployment ready!"
-            echo ""
-            echo "📁 Deployment files:"
-            echo "   App: app/out/ (ready for GitHub Pages)"
-            echo "   Docs: docs/book/ (ready for GitHub Pages)"
-            echo "   Combined: combined-deploy/ (app + docs in one site)"
-            echo ""
-            echo "🌐 Deployment URLs:"
-            echo "   App: https://privacy-ethereum.github.io/zkpdf/"
-            echo "   Docs: https://privacy-ethereum.github.io/zkpdf-docs/"
-            echo "   Combined: https://privacy-ethereum.github.io/zkpdf/ (with /docs subdirectory)"
+            echo "📁 App files: app/.next/ (for Vercel/Node deployment)"
+            echo "🌐 App URL: https://privacy-ethereum.github.io/zkpdf/ (if using static export)"
             ;;
         *)
             print_error "Invalid deployment target: $DEPLOY_TARGET"
             echo ""
-            echo "Usage: $0 [app|docs|all]"
+            echo "Usage: $0 [app|all]"
             echo "  app  - Deploy only the web application"
-            echo "  docs - Deploy only the documentation"
-            echo "  all  - Deploy both app and docs (default)"
+            echo "  all  - Deploy app (default)"
             exit 1
             ;;
     esac
     
     echo ""
     echo "📝 Next steps:"
-    echo "   1. Push to main/dev branch to trigger automatic deployment"
-    echo "   2. Or serve locally:"
-    echo "      - App: cd app && npx serve out"
-    echo "      - Docs: cd docs && mdbook serve"
-    echo "      - Combined: npx serve combined-deploy"
+    echo "   - For local: cd app && yarn start"
+    echo "   - For Vercel: push to main/dev branch"
+    echo "   - For Docker/Node: run 'next start' with proper server setup"
 }
 
 # Run main function
