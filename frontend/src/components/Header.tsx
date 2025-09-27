@@ -24,13 +24,18 @@ export default function Header() {
           <SignedIn>
             <ul className="hidden sm:flex items-center gap-6 text-sm font-medium">
               <li>
-                <Link href="/dashboard" className="hover:text-[#6c47ff]">
-                  Dashboard
+                <Link href="/academic" className="hover:text-[#6c47ff]">
+                  Academic Verification
                 </Link>
               </li>
               <li>
-                <Link href="/explore" className="hover:text-[#6c47ff]">
-                  Explore
+                <Link href="/pan" className="hover:text-[#6c47ff]">
+                  Pancard Verification
+                </Link>
+              </li>
+              <li>
+                <Link href="/name" className="hover:text-[#6c47ff]">
+                  Name Verification
                 </Link>
               </li>
             </ul>
