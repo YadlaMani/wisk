@@ -8,55 +8,62 @@ import {
   SignUpButton,
   UserButton,
 } from "@clerk/nextjs";
+import { ModeToggle } from "./ui/mode-toggle";
+import { Shield } from "lucide-react";
 
 export default function Header() {
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-white border-b shadow-sm">
-      <div className="max-w-7xl mx-auto flex justify-between items-center px-4 sm:px-6 lg:px-8 h-16">
-        <Link
-          href="/"
-          className="text-[30px] font-bold tracking-tight hover:opacity-80 "
-        >
-          Wisk
-        </Link>
+    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-colors">
+      <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center space-x-2">
+          <img src="./logo.png" alt="Logo" className="h-8 w-8" />
+          <Link
+            href="/"
+            className="text-xl font-bold tracking-tight hover:opacity-80 transition-colors"
+          >
+            Wisk
+          </Link>
+        </div>
 
-        <nav className="flex items-center gap-4">
+        {/* Navigation */}
+        <nav className="hidden md:flex items-center space-x-8 text-sm font-medium">
           <SignedIn>
-            <ul className="hidden sm:flex items-center gap-6 text-sm font-medium">
-              <li>
-                <Link href="/academic" className="hover:text-[#6c47ff]">
-                  Academic Verification
-                </Link>
-              </li>
-              <li>
-                <Link href="/pan" className="hover:text-[#6c47ff]">
-                  Pancard Verification
-                </Link>
-              </li>
-              <li>
-                <Link href="/name" className="hover:text-[#6c47ff]">
-                  Name Verification
-                </Link>
-              </li>
-            </ul>
+            <Link
+              href="/academic"
+              className="hover:text-primary transition-colors"
+            >
+              Academic Verification
+            </Link>
+            <Link href="/pan" className="hover:text-primary transition-colors">
+              Pancard Verification
+            </Link>
+            <Link href="/name" className="hover:text-primary transition-colors">
+              Name Verification
+            </Link>
+          </SignedIn>
+        </nav>
 
+        {/* Actions */}
+        <div className="flex items-center space-x-4">
+          <SignedIn>
+            <ModeToggle />
             <UserButton afterSignOutUrl="/" />
           </SignedIn>
 
           <SignedOut>
             <SignInButton mode="modal">
-              <button className="text-sm font-medium px-3 py-2 rounded-md hover:bg-gray-100">
+              <button className="text-sm font-medium px-3 py-2 rounded-md hover:bg-accent transition-colors">
                 Sign In
               </button>
             </SignInButton>
 
             <SignUpButton mode="modal">
-              <button className="bg-[#6c47ff] text-white rounded-full font-medium text-sm sm:text-base h-10 sm:h-11 px-5 cursor-pointer hover:bg-[#5936d9] transition">
+              <button className="bg-primary text-white rounded-full font-medium text-sm h-10 px-5 cursor-pointer hover:bg-primary/90 transition-colors">
                 Sign Up
               </button>
             </SignUpButton>
           </SignedOut>
-        </nav>
+        </div>
       </div>
     </header>
   );
