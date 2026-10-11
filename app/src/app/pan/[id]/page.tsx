@@ -909,7 +909,7 @@ export default function EnhancedPANVerifier({
                         size="lg"
                       >
                         {processing ? (
-                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-white/20 border-t-white mr-3"></div>
+                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary-foreground/20 border-t-primary-foreground mr-3"></div>
                         ) : (
                           <Zap className="h-5 w-5 mr-3" />
                         )}

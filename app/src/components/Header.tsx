@@ -15,7 +15,7 @@ export default function Header() {
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-colors">
       <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center space-x-2">
-          <img src="./logo.png" alt="Logo" className="h-8 w-8" />
+          <img src="/logo.png" alt="Logo" className="h-8 w-8" />
           <Link
             href="/"
             className="text-xl font-bold tracking-tight hover:opacity-80 transition-colors"
@@ -44,8 +44,8 @@ export default function Header() {
 
         {/* Actions */}
         <div className="flex items-center space-x-4">
+          <ModeToggle />
           <SignedIn>
-            <ModeToggle />
             <UserButton afterSignOutUrl="/" />
           </SignedIn>
 
@@ -57,7 +57,7 @@ export default function Header() {
             </SignInButton>
 
             <SignUpButton mode="modal">
-              <button className="bg-primary text-white rounded-full font-medium text-sm h-10 px-5 cursor-pointer hover:bg-primary/90 transition-colors">
+              <button className="bg-primary text-primary-foreground rounded-full font-medium text-sm h-10 px-5 cursor-pointer hover:bg-primary/90 transition-colors">
                 Sign Up
               </button>
             </SignUpButton>
