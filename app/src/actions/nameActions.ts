@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use server";
 import connectToDB from "@/utils/connectToDb";
+import { attestSnark } from "@/actions/chainActions";
 import NameVerify from "@/models/nameModel";
 
 import {
@@ -69,6 +70,7 @@ export async function sendProofMail(
     if (!nameVerify) {
       return { message: "Name Verify not found", success: false };
     }
+    nameVerify.attestationTxs = await attestSnark(id, proofData);
     nameVerify.snark = proofData;
     nameVerify.isVerified = true;
     nameVerify.signature = publicKeyPEM;

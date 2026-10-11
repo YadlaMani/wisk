@@ -2,6 +2,13 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, ChangeEvent } from "react";
+import OnChainProof from "@/components/OnChainProof";
+import {
+  verifySnarkOnChain,
+  type OnChainVerification,
+} from "@/actions/chainActions";
+
+const PROVER_URL = process.env.NEXT_PUBLIC_PROVER_URL ?? "http://localhost:3001";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -97,6 +104,7 @@ export default function EnhancedPANVerifier({
   const [processing, setProcessing] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
 
+  const [onChain, setOnChain] = useState<OnChainVerification | null>(null);
   const [snarkVerificationResult, setSnarkVerificationResult] = useState<
     boolean | null
   >(null);
@@ -257,7 +265,7 @@ export default function EnhancedPANVerifier({
     setProcessing(true);
 
     try {
-      const nameProofResponse = await fetch("http://localhost:3001/prove", {
+      const nameProofResponse = await fetch(`${PROVER_URL}/prove`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -268,7 +276,7 @@ export default function EnhancedPANVerifier({
         }),
       });
 
-      const panProofResponse = await fetch("http://localhost:3001/prove", {
+      const panProofResponse = await fetch(`${PROVER_URL}/prove`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -339,43 +347,14 @@ export default function EnhancedPANVerifier({
     setVerifyingSnark(true);
 
     try {
-      let proofToVerify = res.snark;
-      if (typeof res.snark === "string") {
-        proofToVerify = JSON.parse(res.snark);
-      }
+      const verification = await verifySnarkOnChain(res.snark);
+      setOnChain(verification);
+      setSnarkVerificationResult(verification.valid);
 
-      let nameVerificationResult = true;
-      let panVerificationResult = true;
-
-      if (proofToVerify.nameProof) {
-        const nameResponse = await fetch("http://localhost:3001/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(proofToVerify.nameProof),
-        });
-        const nameResult = await nameResponse.json();
-        nameVerificationResult = nameResult.success || nameResult.valid;
-      }
-
-      if (proofToVerify.panProof) {
-        const panResponse = await fetch("http://localhost:3001/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(proofToVerify.panProof),
-        });
-        const panResult = await panResponse.json();
-        panVerificationResult = panResult.success || panResult.valid;
-      }
-
-      const overallResult = nameVerificationResult && panVerificationResult;
-      setSnarkVerificationResult(overallResult);
-
-      if (overallResult) {
-        toast.success(
-          "SNARK proof verification successful for both name and PAN ID"
-        );
+      if (verification.valid) {
+        toast.success("Proofs verified on Ethereum");
       } else {
-        toast.error("SNARK proof verification failed");
+        toast.error(verification.message ?? "On-chain proof verification failed");
       }
     } catch (e: any) {
       toast.error(
@@ -647,6 +626,10 @@ export default function EnhancedPANVerifier({
                       <Zap className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
+                  <OnChainProof
+                    attestationTxs={res.attestationTxs}
+                    verification={onChain}
+                  />
                 </div>
               )}
 

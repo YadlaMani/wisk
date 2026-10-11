@@ -132,23 +132,25 @@ cargo test -p zkpdf-lib
 
 ## 🌐 **Smart Contract Integration**
 
-The generated proofs can be verified on-chain using the provided Solidity contracts:
+Proofs are Groth16 SNARKs verified on Ethereum by [`PdfVerifier`](contracts/src/PdfVerifier.sol) through Succinct's SP1 verifier gateway:
 
 ```solidity
 contract PdfVerifier {
-    function verifyPdfProof(
-        bytes calldata proof,
-        bytes32 messageDigestHash,
-        bytes32 signerKeyHash,
-        bytes32 substringHash,
-        bytes32 nullifier
-    ) external view returns (bool);
+    // Verify a proof and return its public values (free eth_call)
+    function verifyPdfProof(bytes calldata publicValues, bytes calldata proofBytes)
+        public view returns (PublicValuesStruct memory);
+
+    // Verify a proof and record it as an attestation for a verification request
+    function attest(bytes32 requestId, bytes calldata publicValues, bytes calldata proofBytes)
+        external returns (bytes32 nullifier);
 }
 ```
 
+See [contracts/README.md](contracts/README.md) for deployment.
+
 ## 📚 **Dependencies**
 
-- `sp1-sdk` – SP1 zero-knowledge framework
+- `sp1-sdk` (v6) – SP1 zero-knowledge framework
 - `pdf-utils` – PDF processing libraries
 - `alloy-primitives` – Cryptographic primitives
 - `serde` – Serialization framework

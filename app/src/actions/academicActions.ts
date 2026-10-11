@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use server";
 import connectToDB from "@/utils/connectToDb";
+import { attestSnark } from "@/actions/chainActions";
 import AcademicVerify from "@/models/academicModel";
 import {
   sendAcademicVerificationEmail,
@@ -83,6 +84,7 @@ export async function sendAcademicProofMail(
       return { message: "Academic Verify not found", success: false };
     }
 
+    academicVerify.attestationTxs = await attestSnark(id, proofData);
     academicVerify.snark = proofData;
     academicVerify.isVerified = true;
     academicVerify.signature = publicKeyPEM;

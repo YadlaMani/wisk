@@ -2,6 +2,13 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, ChangeEvent } from "react";
+import OnChainProof from "@/components/OnChainProof";
+import {
+  verifySnarkOnChain,
+  type OnChainVerification,
+} from "@/actions/chainActions";
+
+const PROVER_URL = process.env.NEXT_PUBLIC_PROVER_URL ?? "http://localhost:3001";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -101,6 +108,7 @@ export default function EnhancedAcademicVerifier({
   const [proofGenerated, setProofGenerated] = useState(false);
   const [mailSent, setMailSent] = useState(false);
 
+  const [onChain, setOnChain] = useState<OnChainVerification | null>(null);
   const [snarkVerificationResult, setSnarkVerificationResult] = useState<
     boolean | null
   >(null);
@@ -315,7 +323,7 @@ export default function EnhancedAcademicVerifier({
     toast.info("Generating proofs... This may take a moment.");
 
     try {
-      const proveEndpoint = "http://localhost:3001/prove";
+      const proveEndpoint = `${PROVER_URL}/prove`;
       const makeProofRequest = (sub_string: string) =>
         fetch(proveEndpoint, {
           method: "POST",
@@ -406,49 +414,24 @@ export default function EnhancedAcademicVerifier({
   };
 
   const onVerifySnarkProof = async () => {
-    if (!res?.snark) return toast.error("No SNARK proof found to verify.");
+    if (!res?.snark) return toast.error("No SNARK proof found");
+
     setVerifyingSnark(true);
-    toast.info("Verifying received SNARK proofs...");
 
     try {
-      const proofToVerify =
-        typeof res.snark === "string" ? JSON.parse(res.snark) : res.snark;
+      const verification = await verifySnarkOnChain(res.snark);
+      setOnChain(verification);
+      setSnarkVerificationResult(verification.valid);
 
-      const verifyEndpoint = "http://localhost:3001/verify";
-      const verifyProof = async (proof: any) => {
-        if (!proof) return true;
-        const response = await fetch(verifyEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(proof),
-        });
-        const result = await response.json();
-        return result.success || result.valid;
-      };
-
-      const [nameValid, academicIdValid, instituteValid, cgpaValid] =
-        await Promise.all([
-          verifyProof(proofToVerify.nameProof),
-          verifyProof(proofToVerify.academicIdProof),
-          verifyProof(proofToVerify.instituteProof),
-          verifyProof(proofToVerify.cgpaProof),
-        ]);
-
-      const overallResult =
-        nameValid && academicIdValid && instituteValid && cgpaValid;
-      setSnarkVerificationResult(overallResult);
-
-      if (overallResult) {
-        toast.success(
-          "All received SNARK proofs have been successfully verified."
-        );
+      if (verification.valid) {
+        toast.success("Proofs verified on Ethereum");
       } else {
-        toast.error(
-          "SNARK proof verification failed. One or more proofs are invalid."
-        );
+        toast.error(verification.message ?? "On-chain proof verification failed");
       }
     } catch (e: any) {
-      toast.error(`Error verifying SNARK proof: ${e.message || e}`);
+      toast.error(
+        "Error verifying SNARK proof: " + (e.message || e.toString())
+      );
       setSnarkVerificationResult(false);
     } finally {
       setVerifyingSnark(false);
@@ -693,6 +676,10 @@ export default function EnhancedAcademicVerifier({
                       <Zap className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
+                  <OnChainProof
+                    attestationTxs={res.attestationTxs}
+                    verification={onChain}
+                  />
                 </div>
               )}
             </CardContent>

@@ -2,6 +2,13 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, ChangeEvent } from "react";
+import OnChainProof from "@/components/OnChainProof";
+import {
+  verifySnarkOnChain,
+  type OnChainVerification,
+} from "@/actions/chainActions";
+
+const PROVER_URL = process.env.NEXT_PUBLIC_PROVER_URL ?? "http://localhost:3001";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -83,6 +90,7 @@ export default function EnhancedPDFVerifier({
   const [isVerified, setIsVerified] = useState(false);
 
   // New states for post-mail verification
+  const [onChain, setOnChain] = useState<OnChainVerification | null>(null);
   const [snarkVerificationResult, setSnarkVerificationResult] = useState<
     boolean | null
   >(null);
@@ -213,7 +221,7 @@ export default function EnhancedPDFVerifier({
     setProcessing(true);
 
     try {
-      const response = await fetch("http://localhost:3001/prove", {
+      const response = await fetch(`${PROVER_URL}/prove`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -267,32 +275,19 @@ export default function EnhancedPDFVerifier({
   };
 
   const onVerifySnarkProof = async () => {
-    if (!res?.snarkProof) return toast.error("No SNARK proof found");
+    if (!res?.snark) return toast.error("No SNARK proof found");
 
     setVerifyingSnark(true);
 
     try {
-      // Parse the SNARK proof if it's a string
-      let proofToVerify = res.snarkProof;
-      if (typeof res.snarkProof === "string") {
-        proofToVerify = JSON.parse(res.snarkProof);
-      }
+      const verification = await verifySnarkOnChain(res.snark);
+      setOnChain(verification);
+      setSnarkVerificationResult(verification.valid);
 
-      const response = await fetch("http://localhost:3001/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(proofToVerify),
-      });
-
-      if (!response.ok) throw new Error(`Status ${response.status}`);
-      const result = await response.json();
-
-      setSnarkVerificationResult(result.success || result.valid);
-
-      if (result.success || result.valid) {
-        toast.success("SNARK proof verification successful");
+      if (verification.valid) {
+        toast.success("Proofs verified on Ethereum");
       } else {
-        toast.error("SNARK proof verification failed");
+        toast.error(verification.message ?? "On-chain proof verification failed");
       }
     } catch (e: any) {
       toast.error(
@@ -305,7 +300,7 @@ export default function EnhancedPDFVerifier({
   };
 
   const onVerifySignature = async () => {
-    if (!res?.publicKey) return toast.error("No public key found");
+    if (!res?.signature) return toast.error("No public key found");
 
     try {
       setSignatureVerificationResult(true);
@@ -364,7 +359,7 @@ export default function EnhancedPDFVerifier({
   const canGenerateProof =
     signatureValid && textVerified && pdfBytes && !proofGenerated;
   const canSendMail = proofGenerated && !mailSent;
-  const hasReceivedData = res?.publicKey || res?.snarkProof;
+  const hasReceivedData = res?.signature || res?.snark;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800">
@@ -435,7 +430,7 @@ export default function EnhancedPDFVerifier({
             </CardHeader>
             <CardContent className="space-y-8">
               {/* Enhanced Public Key Verification */}
-              {res?.publicKey && (
+              {res?.signature && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-foreground text-lg flex items-center">
@@ -471,7 +466,7 @@ export default function EnhancedPDFVerifier({
                   <div className="relative">
                     <Textarea
                       readOnly
-                      value={res.publicKey}
+                      value={res.signature}
                       className="w-full h-32 text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-inner resize-none"
                     />
                     <div className="absolute top-2 right-2 opacity-50">
@@ -482,9 +477,9 @@ export default function EnhancedPDFVerifier({
               )}
 
               {/* Enhanced SNARK Proof Verification */}
-              {res?.snarkProof && (
+              {res?.snark && (
                 <div className="space-y-4">
-                  {res?.publicKey && <Separator className="my-6" />}
+                  {res?.signature && <Separator className="my-6" />}
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-foreground text-lg flex items-center">
                       <div className="h-6 w-6 rounded-md bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mr-2">
@@ -523,9 +518,9 @@ export default function EnhancedPDFVerifier({
                     <Textarea
                       readOnly
                       value={
-                        typeof res.snarkProof === "string"
-                          ? res.snarkProof
-                          : JSON.stringify(res.snarkProof, null, 2)
+                        typeof res.snark === "string"
+                          ? res.snark
+                          : JSON.stringify(res.snark, null, 2)
                       }
                       className="w-full h-40 text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-inner resize-none"
                     />
@@ -533,6 +528,10 @@ export default function EnhancedPDFVerifier({
                       <Zap className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
+                  <OnChainProof
+                    attestationTxs={res.attestationTxs}
+                    verification={onChain}
+                  />
                 </div>
               )}
 

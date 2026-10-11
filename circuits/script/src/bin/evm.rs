@@ -14,13 +14,15 @@ use alloy_sol_types::SolType;
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{
-    include_elf, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
+    blocking::{ProveRequest, Prover, ProverClient},
+    include_elf, Elf, HashableKey, ProvingKey, SP1ProofWithPublicValues, SP1Stdin,
+    SP1VerifyingKey,
 };
 use std::path::PathBuf;
 use zkpdf_lib::{types::PDFCircuitInput, PublicValuesStruct};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-pub const ZKPDF_ELF: &[u8] = include_elf!("zkpdf-program");
+pub const ZKPDF_ELF: Elf = include_elf!("zkpdf-program");
 
 /// The arguments for the EVM command.
 #[derive(Parser, Debug)]
@@ -87,7 +89,7 @@ fn main() {
         .unwrap_or_else(|_| panic!("Failed to read PDF file at {}", pdf_path));
 
     // Setup the program.
-    let (pk, vk) = client.setup(ZKPDF_ELF);
+    let pk = client.setup(ZKPDF_ELF).expect("failed to setup elf");
 
     // Setup the inputs.
     let page_number: u8 = page;
@@ -112,12 +114,12 @@ fn main() {
 
     // Generate the proof based on the selected proof system.
     let proof = match system {
-        ProofSystem::Plonk => client.prove(&pk, &stdin).plonk().run(),
-        ProofSystem::Groth16 => client.prove(&pk, &stdin).groth16().run(),
+        ProofSystem::Plonk => client.prove(&pk, stdin).plonk().run(),
+        ProofSystem::Groth16 => client.prove(&pk, stdin).groth16().run(),
     }
     .expect("failed to generate proof");
 
-    create_proof_fixture(&proof, &vk, system);
+    create_proof_fixture(&proof, pk.verifying_key(), system);
 }
 
 /// Create a fixture for the given proof.

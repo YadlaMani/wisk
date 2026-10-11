@@ -11,6 +11,7 @@ const PanSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
     },
     signature: { type: String },
+    attestationTxs: { type: [String], default: [] },
   },
   { timestamps: true }
 );

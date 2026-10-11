@@ -29,13 +29,13 @@ That's exactly what we built.
 
 ### How WISK Works
 
-Here's how it works: when an employer wants to verify a candidate, they don't call a middleman. Instead, they send a simple request by email. The candidate receives that request and uploads their Digilocker-issued certificate — a government-signed PDF. Everything happens locally, right in the browser. The raw document never leaves the user's device.
+Here's how it works: when an employer wants to verify a candidate, they don't call a middleman. Instead, they send a simple request by email. The candidate receives that request and uploads their Digilocker-issued certificate — a government-signed PDF. The signature and the requested details are checked locally, right in the browser, and the document is never stored — only the proof is shared.
 
 Our system uses **WebAssembly with zk-pdf** to parse the actual PDF bytes. It checks whether the requested details — like a name or PAN number — are present inside the document. At the same time, it validates the government's digital signature embedded in the PDF, making sure the document hasn't been edited or forged. If even a single byte is tampered with, the signature breaks and the verification fails.
 
 Once everything checks out, we generate a **zero-knowledge SNARK proof**. This proof says, "Yes, this document is real. Yes, it's signed by the Government of India. Yes, it contains the requested details." And it does all of this without revealing the entire document. Only the facts the employer asked for are disclosed — nothing more.
 
-The proof is then emailed back to the employer. They can verify it instantly, with mathematical certainty. No agencies, no central databases, no trust required — just pure cryptography. And since the proofs are standard SNARKs, anyone in the network can independently verify them too.
+Each proof is then **verified and recorded on Ethereum**. Our `PdfVerifier` contract checks the Groth16 proof through Succinct's SP1 verifier gateway and stores an attestation — the request ID, the hash of the government signing key, the hash of the proven text, and a nullifier that stops the same document from being replayed. The employer gets an email with a link to the result and can re-verify every proof against the contract with a single free `eth_call`, with mathematical certainty. No agencies, no central databases, no trust required — just pure cryptography. And because the attestations live on a public chain, anyone can independently verify them too.
 
 ### Why It's Revolutionary
 
@@ -100,7 +100,8 @@ WISK is architected as a multi-layered system that seamlessly integrates cryptog
 
 #### Cryptographic Stack
 
-- **[SP1 (Succinct Protocol v1)](https://docs.succinct.xyz/)** - Zero-knowledge virtual machine for SNARK generation
+- **[SP1 v6](https://docs.succinct.xyz/)** - Zero-knowledge virtual machine for SNARK generation (Groth16 proofs via the Succinct Prover Network)
+- **[Ethereum](https://ethereum.org/)** - On-chain proof verification and attestations (`PdfVerifier` + SP1 verifier gateway)
 - **[PKCS#7/CMS](https://tools.ietf.org/html/rfc5652)** - Digital signature verification standard
 - **[RSA-PSS](https://tools.ietf.org/html/rfc3447)** - Cryptographic signature algorithms (SHA-256/SHA-1)
 - **[WebAssembly](https://webassembly.org/)** - Browser-compatible cryptographic operations
@@ -118,6 +119,8 @@ WISK is architected as a multi-layered system that seamlessly integrates cryptog
 
 - **[wasm-bindgen](https://rustwasm.github.io/wasm-bindgen/)** - Rust-WebAssembly bindings
 - **[Axum](https://github.com/tokio-rs/axum)** - Async web framework for Rust
+- **[Foundry](https://book.getfoundry.sh/)** - Solidity build, test and deployment
+- **[viem](https://viem.sh/)** - TypeScript Ethereum client for on-chain verification and attestations
 - **[PKI.js](https://pkijs.org/)** - JavaScript cryptographic library
 - **[Radix UI](https://www.radix-ui.com/)** - Headless UI components
 - **[Lucide React](https://lucide.dev/)** - Icon library
@@ -326,33 +329,47 @@ pub fn verify_gst_certificate(pdf_bytes: Vec<u8>) -> GSTCertificate {
 
 #### Smart Contract Integration (`contracts/`)
 
-**Purpose**: On-chain proof verification using Solidity.
+**Purpose**: On-chain proof verification and attestation on Ethereum.
+
+`PdfVerifier` verifies Groth16 proofs through Succinct's SP1 verifier gateway (`0x397A5f7f3dBd538f23DE225B51f532c34448dA9B`, same address on Ethereum and Sepolia) and records each verified claim as an attestation.
 
 ```solidity
+struct PublicValuesStruct {
+    bool substringMatches;     // requested text is present in the signed PDF
+    bytes32 messageDigestHash; // hash of the signed document content
+    bytes32 signerKeyHash;     // hash of the issuer's (e.g. DigiLocker) signing key
+    bytes32 substringHash;     // hash of the proven text — the text itself stays private
+    bytes32 nullifier;         // unique per document + claim, prevents replays
+}
+
 contract PdfVerifier {
-    address public verifier;      // SP1 verifier contract address
-    bytes32 public programVKey;   // Verification key for zkPDF program
+    function verifyPdfProof(bytes calldata _publicValues, bytes calldata _proofBytes)
+        public view returns (PublicValuesStruct memory)
+    {
+        ISP1Verifier(verifier).verifyProof(programVKey, _publicValues, _proofBytes);
+        return abi.decode(_publicValues, (PublicValuesStruct));
+    }
 
-    function verifyPdfProof(
-        bytes calldata _publicValues,
-        bytes calldata _proofBytes
-    ) public view returns (bool) {
-        // Verify the SP1 proof
-        ISP1Verifier(verifier).verifyProof(
-            programVKey,
-            _publicValues,
-            _proofBytes
-        );
+    function attest(bytes32 _requestId, bytes calldata _publicValues, bytes calldata _proofBytes)
+        external returns (bytes32)
+    {
+        PublicValuesStruct memory values = verifyPdfProof(_publicValues, _proofBytes);
+        if (!values.substringMatches) revert SubstringNotFound();
+        if (attestations[values.nullifier].timestamp != 0) revert AlreadyAttested(values.nullifier);
 
-        // Decode and return the verification result
-        PublicValuesStruct memory publicValues = abi.decode(
-            _publicValues,
-            (PublicValuesStruct)
-        );
-        return publicValues.result;
+        attestations[values.nullifier] = Attestation({ requestId: _requestId, /* ... */ });
+        emit PdfClaimAttested(_requestId, values.nullifier, values.signerKeyHash, /* ... */);
+        return values.nullifier;
     }
 }
 ```
+
+| Function | Type | Purpose |
+| --- | --- | --- |
+| `verifyPdfProof` | view (free) | Verify a proof and return its public values |
+| `attest` | transaction | Verify a proof and store it as an attestation for a request |
+| `attestations(nullifier)` | view | Read a stored attestation |
+| `getRequestNullifiers(requestId)` | view | List every attestation recorded for a request |
 
 **Reference**: [Smart Contract Documentation](circuits/contracts/README.md)
 
@@ -360,49 +377,34 @@ contract PdfVerifier {
 
 #### High-Performance Proof Generation
 
+The proving key is set up once at startup and shared across requests; proving runs on a blocking thread so the server stays responsive.
+
 ```rust
-async fn prove(Json(body): Json<ProofRequest>) -> Json<SP1ProofWithPublicValues> {
-    let client = ProverClient::from_env();
-    let (pk, _vk) = client.setup(ZKPDF_ELF);
-
-    let proof_input = PDFCircuitInput {
-        pdf_bytes: body.pdf_bytes,
-        page_number: body.page_number,
-        offset: body.offset.expect("Offset must be provided"),
-        substring: body.sub_string,
-    };
-
+async fn prove(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ProofRequest>,
+) -> Result<Json<ProveResponse>, ApiError> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&proof_input);
+    stdin.write(&PDFCircuitInput { pdf_bytes, page_number, offset, substring: sub_string });
 
-    // Generate proof using SP1 (local or network prover)
-    let proof = client
-        .prove(&pk, &stdin)
-        .expect("Failed to generate proof");
+    // Groth16 proof from the Succinct Prover Network, verifiable on Ethereum
+    let proof = tokio::task::spawn_blocking(move || {
+        state.client.prove(&state.pk, stdin).groth16().run()
+    })
+    .await??;
 
-    Json(proof)
+    Ok(Json(ProveResponse {
+        public_values: format!("0x{}", hex::encode(proof.public_values.as_slice())),
+        proof_bytes: format!("0x{}", hex::encode(proof.bytes())),
+        vkey: state.pk.verifying_key().bytes32(),
+        proof,
+    }))
 }
 ```
 
 #### Proof Verification API
 
-```rust
-async fn verify(Json(proof): Json<SP1ProofWithPublicValues>) -> Json<VerifyResponse> {
-    let client = ProverClient::from_env();
-    let (_pk, vk) = client.setup(ZKPDF_ELF);
-
-    match client.verify(&proof, &vk) {
-        Ok(()) => Json(VerifyResponse {
-            valid: true,
-            error: None,
-        }),
-        Err(e) => Json(VerifyResponse {
-            valid: false,
-            error: Some(e.to_string()),
-        }),
-    }
-}
-```
+`POST /verify` verifies a proof off-chain with the SP1 SDK. In the app, employers verify on-chain through `PdfVerifier` instead (see [On-Chain Proof Verification](#-snark-proof-verification)).
 
 #### Network Prover Configuration
 
@@ -647,7 +649,7 @@ const onGenerateProof = async () => {
   setStatus("Generating SNARK proofs...");
 
   try {
-    const proveEndpoint = "http://localhost:3001/prove";
+    const proveEndpoint = `${PROVER_URL}/prove`; // NEXT_PUBLIC_PROVER_URL
 
     // Generate proofs for all fields in parallel
     const makeProofRequest = (sub_string: string) =>
@@ -851,60 +853,36 @@ const FileUploadZone = ({ onFileSelect, processing, accept = ".pdf" }) => {
 
 ### 🔐 SNARK Proof Verification
 
-#### Client-Side Proof Verification
+#### On-Chain Proof Verification
+
+When the candidate submits, a server action records every proof on Ethereum (`attest`) and stores the transaction hashes with the request. When the employer opens the request, each proof is re-verified against the `PdfVerifier` contract with a free `eth_call`, and the page links to the attestation transactions on Etherscan.
 
 ```typescript
-const onVerifySnarkProof = async () => {
-  if (!res?.snark) return toast.error("No SNARK proof found to verify");
-
-  setVerifyingSnark(true);
-  toast.info("Verifying received SNARK proofs...");
-
-  try {
-    const proofToVerify =
-      typeof res.snark === "string" ? JSON.parse(res.snark) : res.snark;
-
-    const verifyEndpoint = "http://localhost:3001/verify";
-
-    const verifyProof = async (proof: any) => {
-      if (!proof) return true;
-
-      const response = await fetch(verifyEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(proof),
+// app/src/actions/chainActions.ts
+export async function verifySnarkOnChain(snark: any) {
+  const proofs = Object.entries(collectProofs(snark)); // nameProof, panProof, ...
+  const results = await Promise.all(
+    proofs.map(async ([field, proof]) => {
+      const values = await publicClient.readContract({
+        address: PDF_VERIFIER_ADDRESS,
+        abi: pdfVerifierAbi,
+        functionName: "verifyPdfProof",
+        args: [proof.publicValues, proof.proofBytes],
       });
+      return { field, valid: values.substringMatches, nullifier: values.nullifier };
+    })
+  );
+  return { valid: results.every((r) => r.valid), results };
+}
 
-      const result = await response.json();
-      return result.success || result.valid;
-    };
-
-    // Verify all proofs in parallel
-    const [nameValid, academicIdValid, instituteValid, cgpaValid] =
-      await Promise.all([
-        verifyProof(proofToVerify.nameProof),
-        verifyProof(proofToVerify.academicIdProof),
-        verifyProof(proofToVerify.instituteProof),
-        verifyProof(proofToVerify.cgpaProof),
-      ]);
-
-    const allValid =
-      nameValid && academicIdValid && instituteValid && cgpaValid;
-
-    setSnarkVerificationResult(allValid);
-
-    if (allValid) {
-      toast.success("🎉 All SNARK proofs verified successfully!");
-    } else {
-      toast.error("❌ Some SNARK proofs failed verification");
-    }
-  } catch (error) {
-    console.error("Error verifying SNARK proof:", error);
-    toast.error("Error verifying SNARK proof: " + error.message);
-  } finally {
-    setVerifyingSnark(false);
+// Called when the candidate sends their proof
+export async function attestSnark(requestId: string, snark: any) {
+  const hashes: string[] = [];
+  for (const proof of Object.values(collectProofs(snark))) {
+    hashes.push(await attestOnChain(requestId, proof)); // PdfVerifier.attest(...)
   }
-};
+  return hashes;
+}
 ```
 
 ---
@@ -1077,9 +1055,19 @@ NEXT_PUBLIC_API_URL=http://localhost:3000
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_key
 CLERK_SECRET_KEY=your_clerk_secret
 
+# Prover service URL
+NEXT_PUBLIC_PROVER_URL=http://localhost:3001
+
+# Ethereum
+ETH_CHAIN=sepolia                       # or 'mainnet'
+ETH_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
+NEXT_PUBLIC_EXPLORER_URL=https://sepolia.etherscan.io
+PDF_VERIFIER_ADDRESS=0x...              # deployed PdfVerifier
+RELAYER_PRIVATE_KEY=0x...               # wallet that submits attestations
+
 # SP1 Configuration (for prover service)
-SP1_PROVER=network  # or 'local'
-NETWORK_PRIVATE_KEY=your_succinct_api_key
+SP1_PROVER=network
+NETWORK_PRIVATE_KEY=your_succinct_network_key
 RUST_LOG=info
 ```
 
@@ -1093,6 +1081,30 @@ make build-all
 make build-pdf-utils
 make build-circuits
 make build-frontend
+```
+
+### ⛓️ Ethereum Deployment
+
+| Network | Contract | Address |
+| --- | --- | --- |
+| Sepolia | `PdfVerifier` | `<PDF_VERIFIER_ADDRESS>` |
+| Sepolia / Ethereum | SP1 Verifier Gateway (Groth16) | `0x397A5f7f3dBd538f23DE225B51f532c34448dA9B` |
+
+Program verification key (SP1 v6): `0x0053195ac71360b9b760f63d1a2f659d28cf381c39598c42d79e17ef8b6ea224`
+
+```bash
+# 1. Print the program verification key
+cd circuits/script && cargo run --release --bin vkey
+
+# 2. Run the contract tests
+cd ../contracts && forge test
+
+# 3. Deploy PdfVerifier
+PROGRAM_VKEY=0x0053195ac71360b9b760f63d1a2f659d28cf381c39598c42d79e17ef8b6ea224 \
+forge script script/DeployPdfVerifier.s.sol \
+  --rpc-url $ETH_RPC_URL --private-key $RELAYER_PRIVATE_KEY --broadcast
+
+# 4. Set PDF_VERIFIER_ADDRESS in app/.env to the deployed address
 ```
 
 ### 🚢 Production Deployment
@@ -1204,11 +1216,16 @@ Content-Type: application/json
 
 ```json
 {
-  "proof": "0x...",
-  "public_values": "0x...",
-  "vkey": "0x..."
+  "proof": { "Groth16": { "...": "..." } },
+  "public_values": { "buffer": { "data": [] } },
+  "sp1_version": "v6.x",
+  "publicValues": "0x...",
+  "proofBytes": "0x...",
+  "vkey": "0x0053195a..."
 }
 ```
+
+`publicValues` and `proofBytes` are passed directly to `PdfVerifier.verifyPdfProof` / `attest`.
 
 #### Verify Proof
 

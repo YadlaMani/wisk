@@ -1,12 +1,23 @@
-use axum::{routing::post, serve, Json, Router};
+use axum::{extract::{DefaultBodyLimit, State}, http::StatusCode, routing::post, serve, Json, Router};
 use serde::{Deserialize, Serialize};
-use sp1_sdk::{include_elf, ProverClient, SP1ProofWithPublicValues, SP1Stdin};
-use std::net::SocketAddr;
+use sp1_sdk::{
+    blocking::{ProveRequest, Prover, ProverClient},
+    include_elf, Elf, HashableKey, ProvingKey, SP1ProofWithPublicValues, SP1Stdin,
+};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use zkpdf_lib::types::PDFCircuitInput;
 
-pub const ZKPDF_ELF: &[u8] = include_elf!("zkpdf-program");
+pub const ZKPDF_ELF: Elf = include_elf!("zkpdf-program");
+
+type Client = sp1_sdk::blocking::EnvProver;
+type Pk = <Client as Prover>::ProvingKey;
+
+struct AppState {
+    client: Client,
+    pk: Pk,
+}
 
 #[derive(Deserialize)]
 struct ProofRequest {
@@ -16,16 +27,29 @@ struct ProofRequest {
     offset: Option<usize>,
 }
 
+/// The SP1 proof plus the hex-encoded values needed to verify it on-chain.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProveResponse {
+    #[serde(flatten)]
+    proof: SP1ProofWithPublicValues,
+    public_values: String,
+    proof_bytes: String,
+    vkey: String,
+}
+
 #[derive(Serialize)]
 struct VerifyResponse {
     valid: bool,
     error: Option<String>,
 }
 
-async fn prove(Json(body): Json<ProofRequest>) -> Json<SP1ProofWithPublicValues> {
-    let client = ProverClient::from_env();
-    let (pk, _vk) = client.setup(ZKPDF_ELF);
+type ApiError = (StatusCode, String);
 
+async fn prove(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ProofRequest>,
+) -> Result<Json<ProveResponse>, ApiError> {
     let ProofRequest {
         pdf_bytes,
         page_number,
@@ -33,40 +57,58 @@ async fn prove(Json(body): Json<ProofRequest>) -> Json<SP1ProofWithPublicValues>
         offset,
     } = body;
 
-    let offset = offset.expect("Offset must be provided in the request");
-    let offset_u32 = u32::try_from(offset).expect("offset does not fit in u32");
-
-    let proof_input = PDFCircuitInput {
-        pdf_bytes,
-        page_number,
-        offset: offset_u32,
-        substring: sub_string,
-    };
+    let offset = u32::try_from(offset.unwrap_or(0))
+        .map_err(|_| (StatusCode::BAD_REQUEST, "offset does not fit in u32".to_string()))?;
 
     let mut stdin = SP1Stdin::new();
-    stdin.write(&proof_input);
+    stdin.write(&PDFCircuitInput {
+        pdf_bytes,
+        page_number,
+        offset,
+        substring: sub_string,
+    });
 
-    let proof = client
-        .prove(&pk, &stdin)
-        .groth16()
-        .run()
-        .expect("failed to generate proof");
+    let proof = tokio::task::spawn_blocking(move || {
+        state.client.prove(&state.pk, stdin).groth16().run().map(|proof| {
+            let vkey = state.pk.verifying_key().bytes32();
+            (proof, vkey)
+        })
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Json(proof)
+    let (proof, vkey) =
+        proof.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to generate proof: {e}")))?;
+
+    Ok(Json(ProveResponse {
+        public_values: format!("0x{}", hex::encode(proof.public_values.as_slice())),
+        proof_bytes: format!("0x{}", hex::encode(proof.bytes())),
+        vkey,
+        proof,
+    }))
 }
 
-async fn verify(Json(proof): Json<SP1ProofWithPublicValues>) -> Json<VerifyResponse> {
-    let client = ProverClient::from_env();
-    let (_pk, vk) = client.setup(ZKPDF_ELF);
+async fn verify(
+    State(state): State<Arc<AppState>>,
+    Json(proof): Json<SP1ProofWithPublicValues>,
+) -> Json<VerifyResponse> {
+    let result = tokio::task::spawn_blocking(move || {
+        state.client.verify(&proof, state.pk.verifying_key(), None)
+    })
+    .await;
 
-    match client.verify(&proof, &vk) {
-        Ok(_) => Json(VerifyResponse {
+    match result {
+        Ok(Ok(())) => Json(VerifyResponse {
             valid: true,
             error: None,
         }),
-        Err(e) => Json(VerifyResponse {
+        Ok(Err(e)) => Json(VerifyResponse {
             valid: false,
             error: Some(format!("Verification failed: {}", e)),
+        }),
+        Err(e) => Json(VerifyResponse {
+            valid: false,
+            error: Some(e.to_string()),
         }),
     }
 }
@@ -85,6 +127,15 @@ async fn main() {
         "Invalid or missing NETWORK_PRIVATE_KEY"
     );
 
+    let state = tokio::task::spawn_blocking(|| {
+        let client = ProverClient::from_env();
+        let pk = client.setup(ZKPDF_ELF).expect("failed to setup elf");
+        tracing::info!("program vkey: {}", pk.verifying_key().bytes32());
+        Arc::new(AppState { client, pk })
+    })
+    .await
+    .expect("failed to initialise prover");
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -93,7 +144,9 @@ async fn main() {
     let app = Router::new()
         .route("/prove", post(prove))
         .route("/verify", post(verify))
-        .layer(cors);
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        .layer(cors)
+        .with_state(state);
 
     let port: u16 = std::env::var("PORT")
         .ok()

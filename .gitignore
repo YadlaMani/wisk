@@ -11,6 +11,8 @@ book/
 
 # Generated WASM files
 **/pkg/
+# Prebuilt WASM used by the app (Vercel cannot build Rust)
+!app/public/pkg/
 *.wasm
 *.wasm.d.ts
 wasm.js
@@ -93,8 +95,18 @@ jspm_packages/
 
 # Rust
 Cargo.lock
+# Pinned so the SP1 program (and its verification key) builds reproducibly
+!circuits/Cargo.lock
 target/
 **/*.rs.bk
 
 # mdBook
 book/
+
+# Foundry
+circuits/contracts/lib/
+circuits/contracts/cache/
+circuits/contracts/broadcast/
+
+# Keep the prebuilt WASM bundle the app imports
+!app/public/pkg/*
